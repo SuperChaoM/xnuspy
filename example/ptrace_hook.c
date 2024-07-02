@@ -54,63 +54,81 @@ struct nameidata {
     /* ... */
 };
 
+struct ptrace_args {
+    int req;         // 4 bytes
+    void * unknow1[4];        //和实际内存的中偏移不符.实际pid 是+8，所以加了unknow填充
+    
+    pid_t pid;   
+    
+    // void * unknow2[];     // 4 bytes
+    user_addr_t addr;// 8 bytes (on a 64-bit system)
+    int data;        // 4 bytes
+};
+
+static int targetId;
 #define BLOCKED_FILE "/var/mobile/testfile.txt"
+static int (*ptrace_orig)(struct proc *p, struct ptrace_args *uap, int32_t *retval);
 
-static int (*open1_orig)(void *vfsctx, struct nameidata *ndp, int uflags,
-        void *vap, void *fp_zalloc, void *cra, int32_t *retval);
+static int my_ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval){
 
-static int open1(void *vfsctx, struct nameidata *ndp, int uflags,
-        void *vap, void *fp_zalloc, void *cra, int32_t *retval){
-    char *path = NULL;
 
-    if(!(ndp->ni_dirp && UIO_SEG_IS_USER_SPACE(ndp->ni_segflag)))
-        goto orig;
 
-    size_t sz = PATHBUFLEN;
-
-    if(!(path = unified_kalloc(sz)))
-        goto orig;
-
-    _bzero(path, sz);
-
-    size_t pathlen = 0;
-    int res = copyinstr(ndp->ni_dirp, path, sz, &pathlen);
-
-    if(res)
-        goto orig;
-
-    path[pathlen - 1] = '\0';
+    kprintf("\n ptrace -- start \n");
 
     uint8_t cpu = curcpu();
     pid_t caller = caller_pid();
 
     char *caller_name = unified_kalloc(MAXCOMLEN + 1);
 
-    if(!caller_name)
-        goto orig;
+    if(!caller_name){
+    kprintf("\n ptrace -- caller_name \n");
+        return ptrace_orig(p,uap,retval);
+    }
+    
 
     /* proc_name doesn't bzero for some version of iOS 13 */
     _bzero(caller_name, MAXCOMLEN + 1);
     proc_name(caller, caller_name, MAXCOMLEN + 1);
 
-    kprintf("%s: (CPU %d): '%s' (%d) wants to open '%s'\n", __func__, cpu,
-            caller_name, caller, path);
+    kprintf("$$$$$$$$$$$$ %s: (CPU %d): '%s' (%d) ptrace_hook  to req : %d pid : %d  \n", __func__, cpu,
+            caller_name, caller,uap->req,uap->pid);
+
+
 
     unified_kfree(caller_name);
 
-    if(_strcmp(path, BLOCKED_FILE) == 0){
-        kprintf("%s: denying open for '%s'\n", __func__, path);
-        unified_kfree(path);
-        *retval = -1;
-        return ENOENT;
+
+    if (uap->req == 31)
+    {
+        /* code */
+
+
+  
+        kprintf("uap->req == 31 uap->req %d \n",uap->req);
+        
+        kprintf("uap->req == 31 uap->pid %d \n",uap->pid);
+        
+        kprintf("uap->req == 31 uap->addr %d \n",uap->addr);
+        kprintf("uap->req == 31 uap->data %d \n",uap->data);
+
+        
+        return 0;
+  
+
     }
+    // else{
+    //     kprintf("chage uap->req %d",uap->req);
+    //     kprintf("chage uap->pid %d",uap->pid);
+    // }
+    
+    // kprintf("ptrace -- end");
 
-orig:;
-    if(path)
-        unified_kfree(path);
-
-    return open1_orig(vfsctx, ndp, uflags, vap, fp_zalloc, cra, retval);
+    // return 0;
+    return ptrace_orig(p,uap,retval);
 }
+
+
+
 
 static long SYS_xnuspy_ctl = 0;
 
@@ -139,6 +157,15 @@ static int gather_kernel_offsets(void){
 }
 
 int main(int argc, char **argv){
+
+
+        printf("useage: ptrace_hook target_pid \n");
+        printf("argc = %d\n", argc);
+    for (int i = 0; i < argc; ++i)
+    {
+        printf("argv[%d] =%s\n", i,argv[i]);
+    }
+    // int pid = atoi(argv[1]);
     size_t oldlen = sizeof(long);
     int ret = sysctlbyname("kern.xnuspy_ctl_callnum", &SYS_xnuspy_ctl,
             &oldlen, NULL, 0);
@@ -163,12 +190,15 @@ int main(int argc, char **argv){
         return 1;
     }
 
-    /* iPhone 7 14.1 0xfffffff00730aa64  */
-    ret = syscall(SYS_xnuspy_ctl, XNUSPY_INSTALL_HOOK, 0xFFFFFFF0072798EC,
-            open1, &open1_orig);
+    printf("uSYS_xnuspy_ctl \n");
+    /* iPhone 7 14.1 */                                //FFFFFFF007584D9C 
+    /* iPhone 8.4 13.3.1 *///0xFFFFFFF0074E8610    
+    //                     
+    ret = syscall(SYS_xnuspy_ctl, XNUSPY_INSTALL_HOOK, 0xfffffff00757d3b0,
+            my_ptrace, &ptrace_orig);
 
     if(ret){
-        printf("Could not hook open1: %s\n", strerror(errno));
+        printf("Could not hook ptrace: %s\n", strerror(errno));
         return 1;
     }
 
@@ -176,7 +206,7 @@ int main(int argc, char **argv){
         int fd = open(BLOCKED_FILE, O_CREAT);
 
         if(fd == -1)
-            printf("open failed: %s\n", strerror(errno));
+            printf("open ptrace failed: %s\n", strerror(errno));
         else{
             printf("Got valid fd? %d\n", fd);
             close(fd);
@@ -184,6 +214,14 @@ int main(int argc, char **argv){
 
         sleep(1);
     }
+    // for(;;){
+     
+    //     static int flag = 0;
+    //     printf("ptrace_hook %d",flag);
+    //     flag = flag + 1;
+
+    //     sleep(1);
+    // }
 
     return 0;
 }

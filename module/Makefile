@@ -1,5 +1,5 @@
 SDK = $(shell xcrun --sdk iphoneos --show-sdk-path)
-CC = $(shell xcrun --sdk $(SDK) --find clang)
+CC = $(shell xcrun --sdk '$(SDK)' --find clang)
 CFLAGS = -isysroot $(SDK) -arch arm64 -Wno-string-plus-int -fno-stack-protector
 CFLAGS += -Wno-shorten-64-to-32 -D_FORTIFY_SOURCE=0 -nostdlib
 CFLAGS += -DXNUSPY_PRIVATE -I$(RP)/include
